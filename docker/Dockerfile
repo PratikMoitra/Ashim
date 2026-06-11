@@ -119,24 +119,36 @@ FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae
 ARG TARGETARCH
 FROM libheif-base-${TARGETARCH} AS libheif-builder
 
-ARG LIBHEIF_VERSION=1.21.2
-
+# Install build dependencies for newer libheif
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake pkg-config gcc g++ make curl ca-certificates \
-    libde265-dev libx265-dev libjpeg-dev libpng-dev \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    ca-certificates \
+    libde265-dev \
+    libx265-dev \
+    libaom-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL --retry 3 --retry-delay 5 "https://github.com/strukturag/libheif/releases/download/v${LIBHEIF_VERSION}/libheif-${LIBHEIF_VERSION}.tar.gz" \
-      | tar xz \
-    && cmake -B build -S "libheif-${LIBHEIF_VERSION}" \
-      -DCMAKE_INSTALL_PREFIX=/opt/libheif \
-      -DWITH_EXAMPLES=ON \
-      -DWITH_GDK_PIXBUF=OFF \
-      -DWITH_AOM_DECODER=OFF \
-      -DWITH_AOM_ENCODER=OFF \
-      -DWITH_DAV1D=OFF \
+# Build newer libheif to fix modern iPhone/iOS HEIC decode issue
+RUN git clone --branch v1.19.8 --depth 1 https://github.com/strukturag/libheif.git /tmp/libheif \
+    && cd /tmp/libheif \
+    && cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/libheif \
+        -DBUILD_SHARED_LIBS=ON \
+        -DWITH_EXAMPLES=ON \
     && cmake --build build -j$(nproc) \
-    && cmake --install build
+    && cmake --install build \
+    && ldconfig \
+    && ln -sf /opt/libheif/bin/heif-convert /usr/bin/heif-convert \
+    && ln -sf /opt/libheif/bin/heif-info /usr/bin/heif-info \
+    && rm -rf /tmp/libheif
 
 # ============================================
 # Stage 3: Platform-specific base images
@@ -226,11 +238,13 @@ RUN POLICY_FILE=$(find /etc/ImageMagick* -name policy.xml 2>/dev/null | head -1)
 COPY --from=caire-builder /tmp/caire /usr/local/bin/caire
 
 # libheif tools (heif-convert, heif-dec, heif-enc) built from source.
-# LD_LIBRARY_PATH ensures our custom 1.21.2 libs take precedence over distro libheif1.
+# LD_LIBRARY_PATH ensures our custom v1.19.8 libs take precedence over distro libheif1.
 COPY --from=libheif-builder /opt/libheif/bin/ /usr/local/bin/
 COPY --from=libheif-builder /opt/libheif/lib/ /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib
-RUN ldconfig
+RUN ldconfig && \
+    ln -sf /usr/local/bin/heif-convert /usr/bin/heif-convert && \
+    ln -sf /usr/local/bin/heif-info /usr/bin/heif-info
 
 # Python venv - Base packages (rarely change, cached aggressively)
 # Uses pre-built manylinux wheels where available; gcc/g++ above covers the rest.

@@ -8,24 +8,36 @@
 # ============================================
 FROM node:22-bookworm@sha256:1031993481795705055273f2eef0c24597abdcb277d6e058c82f78cbbdef92a6 AS libheif-builder
 
-ARG LIBHEIF_VERSION=1.21.2
-
+# Install build dependencies for newer libheif
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake pkg-config gcc g++ make curl ca-certificates \
-    libde265-dev libx265-dev libjpeg-dev libpng-dev \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    ca-certificates \
+    libde265-dev \
+    libx265-dev \
+    libaom-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libtiff-dev \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL "https://github.com/strukturag/libheif/releases/download/v${LIBHEIF_VERSION}/libheif-${LIBHEIF_VERSION}.tar.gz" \
-      | tar xz \
-    && cmake -B build -S "libheif-${LIBHEIF_VERSION}" \
-      -DCMAKE_INSTALL_PREFIX=/opt/libheif \
-      -DWITH_EXAMPLES=ON \
-      -DWITH_GDK_PIXBUF=OFF \
-      -DWITH_AOM_DECODER=OFF \
-      -DWITH_AOM_ENCODER=OFF \
-      -DWITH_DAV1D=OFF \
+# Build newer libheif to fix modern iPhone/iOS HEIC decode issue
+RUN git clone --branch v1.19.8 --depth 1 https://github.com/strukturag/libheif.git /tmp/libheif \
+    && cd /tmp/libheif \
+    && cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/libheif \
+        -DBUILD_SHARED_LIBS=ON \
+        -DWITH_EXAMPLES=ON \
     && cmake --build build -j$(nproc) \
-    && cmake --install build
+    && cmake --install build \
+    && ldconfig \
+    && ln -sf /opt/libheif/bin/heif-convert /usr/bin/heif-convert \
+    && ln -sf /opt/libheif/bin/heif-info /usr/bin/heif-info \
+    && rm -rf /tmp/libheif
 
 # ============================================
 # Stage 2: Test runner
@@ -48,7 +60,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=libheif-builder /opt/libheif/bin/ /usr/local/bin/
 COPY --from=libheif-builder /opt/libheif/lib/ /usr/local/lib/
-RUN ldconfig
+RUN ldconfig && \
+    ln -sf /usr/local/bin/heif-convert /usr/bin/heif-convert && \
+    ln -sf /usr/local/bin/heif-info /usr/bin/heif-info
 
 WORKDIR /app
 
